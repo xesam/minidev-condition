@@ -1,0 +1,11 @@
+<navigation-bar title="登录" back="{{true}}" color="black" background="#FFF"></navigation-bar>
+<scroll-view class="scrollarea" scroll-y type="list">
+  <view class="container">
+    <view class="card">
+      <view class="title">需要登录</view>
+      <view class="desc">请登录后查看商品。</view>
+      <button bindtap="onLogin" type="primary">登录</button>
+      <button bindtap="onCancel" type="default">暂不登录</button>
+    </view>
+  </view>
+</scroll-view>

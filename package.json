@@ -1,0 +1,15 @@
+{
+  "name": "condition-monorepo",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm -r dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "changeset": "changeset"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.0",
+    "typescript": "^5.4.0"
+  }
+}

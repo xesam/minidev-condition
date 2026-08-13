@@ -1,0 +1,15 @@
+<navigation-bar title="选择城市" back="{{true}}" color="black" background="#FFF"></navigation-bar>
+<scroll-view class="scrollarea" scroll-y type="list">
+  <view class="container">
+    <view class="title">请选择城市</view>
+    <view class="list">
+      <block wx:for="{{cities}}" wx:key="*this">
+        <view class="item" bindtap="onSelect" data-city="{{item}}">
+          <text>{{item}}</text>
+          <text class="arrow">></text>
+        </view>
+      </block>
+    </view>
+    <view class="back" bindtap="onBack">返回</view>
+  </view>
+</scroll-view>

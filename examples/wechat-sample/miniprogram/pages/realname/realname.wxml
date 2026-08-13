@@ -1,0 +1,11 @@
+<navigation-bar title="实名认证" back="{{true}}" color="black" background="#FFF"></navigation-bar>
+<scroll-view class="scrollarea" scroll-y type="list">
+  <view class="container">
+    <view class="card">
+      <view class="title">实名认证</view>
+      <view class="desc">请完成实名认证以使用支付功能。</view>
+      <button bindtap="onVerify" type="primary">完成认证</button>
+      <button bindtap="onCancel" type="default">取消</button>
+    </view>
+  </view>
+</scroll-view>

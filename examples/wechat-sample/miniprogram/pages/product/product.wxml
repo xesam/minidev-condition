@@ -1,0 +1,20 @@
+<navigation-bar title="商品" back="{{true}}" color="black" background="#FFF"></navigation-bar>
+<scroll-view class="scrollarea" scroll-y type="list">
+  <view class="container">
+    <view class="card" wx:if="{{loginReady}}">
+      <view class="title">商品详情</view>
+      <view class="desc">示例商品 ¥99.00</view>
+      <button bindtap="onPay" type="primary" disabled="{{paySuccess}}">支付</button>
+      <view class="status" wx:if="{{paySuccess}}">支付成功</view>
+      <view class="status unverified" wx:if="{{payCancelled}}">实名未通过，可重试支付</view>
+    </view>
+    <view class="card" wx:elif="{{loginCancelled}}">
+      <view class="title">未登录</view>
+      <view class="desc">登录已取消，无法查看商品。</view>
+      <button bindtap="retryLogin" type="primary">重新登录</button>
+    </view>
+    <view class="loading" wx:else>
+      <text>正在检查登录...</text>
+    </view>
+  </view>
+</scroll-view>

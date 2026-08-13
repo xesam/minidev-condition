@@ -1,0 +1,52 @@
+page {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.scrollarea {
+  flex: 1;
+  overflow-y: hidden;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  padding: 40rpx;
+}
+
+.title {
+  font-size: 40rpx;
+  font-weight: 600;
+  margin-bottom: 30rpx;
+}
+
+.list {
+  background: #fff;
+  border-radius: 16rpx;
+  box-shadow: 0 4rpx 20rpx rgba(0, 0, 0, 0.08);
+}
+
+.item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 30rpx 40rpx;
+  border-bottom: 1rpx solid #f0f0f0;
+  font-size: 32rpx;
+}
+
+.item:last-child {
+  border-bottom: none;
+}
+
+.arrow {
+  color: #999;
+}
+
+.back {
+  margin-top: 40rpx;
+  text-align: center;
+  color: #576b95;
+  font-size: 28rpx;
+}

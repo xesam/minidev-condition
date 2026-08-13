@@ -1,0 +1,8 @@
+\.*
+!.gitignore
+
+node_modules
+miniprogram_npm
+dist/
+coverage/
+project.private.config.json

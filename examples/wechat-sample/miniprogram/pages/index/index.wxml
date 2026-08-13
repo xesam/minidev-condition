@@ -1,0 +1,28 @@
+<navigation-bar title="首页" back="{{false}}" color="black" background="#FFF"></navigation-bar>
+<scroll-view class="scrollarea" scroll-y type="list">
+  <view class="container">
+    <view class="card" wx:if="{{ready}}">
+      <view class="title">首页</view>
+      <view class="info">当前城市: {{cityName}}</view>
+      <view class="desc">协议与城市条件均已满足</view>
+      <button bindtap="goToProduct" type="primary">去商品页</button>
+    </view>
+    <view class="loading" wx:if="{{!ready && !showAgreement}}">
+      <text>正在检查前置条件...</text>
+    </view>
+  </view>
+</scroll-view>
+
+<!-- 隐私协议弹层（自定义 overlay） -->
+<view class="overlay" wx:if="{{showAgreement}}">
+  <view class="sheet">
+    <view class="sheet-title">隐私协议</view>
+    <scroll-view class="sheet-body" scroll-y>
+      <view class="sheet-text">{{agreementText}}</view>
+    </scroll-view>
+    <view class="sheet-actions">
+      <button bindtap="onDeny" type="default">不同意</button>
+      <button bindtap="onAgree" type="primary">同意</button>
+    </view>
+  </view>
+</view>
