@@ -11,6 +11,7 @@
 
 import type { ConditionRef, Target } from './types';
 import { EnsureResult, ResolveResult } from './types';
+import type { EnsureOutcome } from './types';
 
 /**
  * A prerequisite as accepted at the page edge. A bare string is treated as
@@ -23,10 +24,8 @@ export type PrerequisiteRef = string | ConditionRef;
 /** Runtime surface a page-edge helper needs. A {@link ConditionRuntime} satisfies it
  *  — whether it's the app-level global flow or a page flow with a parent. */
 export interface PrerequisiteRuntime {
-  ensure(target: Target): Promise<EnsureResult>;
+  ensure(target: Target): Promise<EnsureOutcome>;
   isSatisfied(key: string, params?: Record<string, unknown>): boolean;
-  /** The condition deferred during the most recent `ensure()`, if any. */
-  getDeferredCondition(): { condition: string; params?: Record<string, unknown> } | undefined;
 }
 
 /** Normalize page-edge `PrerequisiteRef[]` to core's strict `ConditionRef[]`. */
@@ -77,9 +76,10 @@ export interface PrerequisiteControllerOptions {
  *   returns SUCCESS / CANCEL / FAILED and the chain proceeds within one
  *   `ensure()`.
  * - A resolver that needs another page triggers the navigation itself and
- *   returns DEFERRED. `ensure()` then returns DEFERRED and the originating
- *   page stays not-ready. When the user returns (resume after pause), the
- *   flow revives: if the deferred condition is now satisfied, the chain
+ *   returns DEFERRED. `ensure()` then returns an outcome with
+ *   `result: DEFERRED` and `deferredCondition` identifying which condition
+ *   to re-check. When the user returns (resume after pause), the flow
+ *   revives: if the deferred condition is now satisfied, the chain
  *   continues; if not, the flow terminates (the user denied / abandoned).
  *
  * The condition library does NOT own navigation or cross-page result
@@ -114,13 +114,15 @@ export function createPrerequisiteController(
   let terminated = false;
 
   async function run() {
-    const result = await runtime.ensure(target);
-    if (result === EnsureResult.READY) {
+    const outcome = await runtime.ensure(target);
+    if (outcome.result === EnsureResult.READY) {
       deferred = null;
       terminated = false;
       onReady();
-    } else if (result === EnsureResult.DEFERRED) {
-      deferred = runtime.getDeferredCondition() ?? null;
+    } else if (outcome.result === EnsureResult.DEFERRED) {
+      // The deferred condition is returned inline — no separate
+      // getDeferredCondition() call needed, and no shared-state race.
+      deferred = outcome.deferredCondition;
     } else {
       // CANCEL / FAILED — the chain stopped.
       deferred = null;

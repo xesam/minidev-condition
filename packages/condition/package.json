@@ -1,7 +1,7 @@
 {
   "name": "@mini-dev/condition",
-  "version": "0.0.1",
-  "description": "Prerequisite runtime for mini-program — declare what your page needs, runtime ensures it",
+  "version": "0.1.0",
+  "description": "小程序前置条件编排引擎 — 声明页面需要哪些条件，运行时自动判断、串行补齐并返回结果 | Prerequisite orchestration engine for mini-programs",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/cjs/index.d.ts",
@@ -35,13 +35,28 @@
   "keywords": [
     "miniprogram",
     "小程序",
+    "wechat",
+    "微信小程序",
     "prerequisite",
     "condition",
     "ensure",
-    "miniapp"
+    "miniapp",
+    "route-guard",
+    "interceptor",
+    "前置条件",
+    "页面拦截"
   ],
   "author": "xesam",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xesam/minidev-condition.git",
+    "directory": "packages/condition"
+  },
+  "bugs": {
+    "url": "https://github.com/xesam/minidev-condition/issues"
+  },
+  "homepage": "https://github.com/xesam/minidev-condition#readme",
   "devDependencies": {
     "@vitest/coverage-v8": "^1.6.1",
     "rimraf": "^6.1.3",

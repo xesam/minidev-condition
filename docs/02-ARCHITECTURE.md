@@ -153,12 +153,34 @@ const flow = createPrerequisiteController({
 
 `resume()` 的"真离开"判定：只有 `pause()` 之后的 `resume()` 才复行；`start()` 后紧跟的首次 `resume()` 被跳过（那次 show 是新建的一部分，不是"返回"）。
 
+### 平台限制：微信返回动画期间 navigateTo 被丢弃
+
+**问题**：在 `resume()` 触发的 resolver 里立即调用 `wx.navigateTo()` 时，该调用会被微信运行时**静默丢弃**（无报错、无跳转）。原因是用户刚从子页返回，返回动画（约 200–300ms）尚未结束，微信此时拒绝新的 navigateTo 调用。
+
+**解决方案**：在 resolver 内用 `setTimeout` 延迟 200–300ms 后再调用 `wx.navigateTo`，等返回动画结束后再跳转。
+
+```ts
+// ✗ 错误：立即 navigateTo 会被丢弃
+async resolve() {
+  wx.navigateTo({ url: '/pages/city/city' });
+  return ResolveResult.DEFERRED;
+}
+
+// ✓ 正确：延迟 300ms 等返回动画结束
+async resolve() {
+  setTimeout(() => wx.navigateTo({ url: '/pages/city/city' }), 300);
+  return ResolveResult.DEFERRED;
+}
+```
+
+这是微信小程序平台的真实限制，不是本库的设计选择。`examples/wechat-sample` 的所有 DEFERRED resolver（login / city / realname）都采用了这个 workaround。
+
 ## 五、运行时保证
 
 1. **`ensure(target)` 是唯一编排入口**；core 不理解生命周期事件。
 2. **单飞去重**：`ConditionRuntime.ensure()` 按 `(targetKey + 序列化 conditions)` 在 `inFlightEnsures` 去重并发调用。
 3. **补齐后置校验**：每个 resolver 成功后重新校验 `isSatisfied()`，不满足则 `FAILED`。
-4. **`dependsOn` 就绪过滤**：一个 ref 只有当其 `dependsOn` 全部满足时才"ready"被解；非拓扑排序、非环检测。
+4. **`dependsOn` 就绪过滤（仅 target 内）**：一个 ref 只有当其 `dependsOn` 声明的依赖条件也在同一 `target.conditions` 数组内且仍 pending 时才被阻塞；依赖条件不在 target 内时视为"已满足"不阻塞。跨层依赖（parent-child）通过 parent-first 顺序免费保证：parent 阶段达到 READY 后才进入 child 阶段，child 条件无需 `dependsOn` 列出 parent 条件。无环检测，互相依赖时退化为数组顺序。
 5. **一次复行机会**：deferred 条件在返回时仍未满足则终止，不循环；新页面实例重置。
 
 ## 六、示例时序：pay 页 parent-first

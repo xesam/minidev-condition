@@ -41,7 +41,7 @@ describe('ConditionRuntime parent-child', () => {
       conditions: [{ condition: 'auth' }, { condition: 'draft' }],
     };
 
-    await expect(pageFlow.ensure(target)).resolves.toBe(EnsureResult.READY);
+    await expect(pageFlow.ensure(target)).resolves.toMatchObject({ result: EnsureResult.READY });
     expect(calls).toEqual(['global', 'page']);
   });
 
@@ -78,7 +78,7 @@ describe('ConditionRuntime parent-child', () => {
       conditions: [{ condition: 'auth' }, { condition: 'draft' }],
     };
 
-    await expect(pageFlow.ensure(target)).resolves.toBe(EnsureResult.READY);
+    await expect(pageFlow.ensure(target)).resolves.toMatchObject({ result: EnsureResult.READY });
   });
 
   it('does not run own resolvers when the parent cancels', async () => {
@@ -103,7 +103,7 @@ describe('ConditionRuntime parent-child', () => {
       conditions: [{ condition: 'auth' }, { condition: 'draft' }],
     };
 
-    await expect(pageFlow.ensure(target)).resolves.toBe(EnsureResult.CANCEL);
+    await expect(pageFlow.ensure(target)).resolves.toMatchObject({ result: EnsureResult.CANCEL });
     expect(pageResolverCalled).toBe(false);
   });
 
@@ -129,7 +129,7 @@ describe('ConditionRuntime parent-child', () => {
       conditions: [{ condition: 'auth' }, { condition: 'draft' }],
     };
 
-    await expect(pageFlow.ensure(target)).resolves.toBe(EnsureResult.FAILED);
+    await expect(pageFlow.ensure(target)).resolves.toMatchObject({ result: EnsureResult.FAILED });
     expect(pageResolverCalled).toBe(false);
   });
 
@@ -161,20 +161,64 @@ describe('ConditionRuntime parent-child', () => {
 
     const target: Target = { key: 'checkout', conditions: [{ condition: 'auth' }] };
 
-    await expect(pageFlow.ensure(target)).resolves.toBe(EnsureResult.READY);
+    await expect(pageFlow.ensure(target)).resolves.toMatchObject({ result: EnsureResult.READY });
     expect(calls).toEqual(['child']);
   });
 
-  it('fails when a ref is owned by neither this runtime nor the parent', async () => {
+  it('returns ERROR when a ref is owned by neither this runtime nor the parent', async () => {
     const globalFlow = new ConditionRuntime();
     const pageFlow = new ConditionRuntime(globalFlow);
     // Neither registers 'missing'.
     const target: Target = { key: 'checkout', conditions: [{ condition: 'missing' }] };
 
-    await expect(pageFlow.ensure(target)).resolves.toBe(EnsureResult.FAILED);
+    const outcome = await pageFlow.ensure(target);
+    expect(outcome).toMatchObject({ result: EnsureResult.ERROR });
+    expect((outcome as { result: EnsureResult.ERROR; message: string }).message).toContain('missing');
   });
 
-  it('reports a parent-phase DEFERRED through getDeferredCondition', async () => {
+  it('resolves a condition registered on a grandparent (3-level chain)', async () => {
+    let rootSatisfied = false;
+    let midSatisfied = false;
+    let leafSatisfied = false;
+    const calls: string[] = [];
+
+    const root = new ConditionRuntime();
+    root.registerCondition({ key: 'auth', satisfied: () => rootSatisfied });
+    root.registerResolver({
+      condition: 'auth',
+      resolve: async () => { rootSatisfied = true; calls.push('auth'); return ResolveResult.SUCCESS; },
+    });
+
+    const mid = new ConditionRuntime(root);
+    mid.registerCondition({ key: 'agreement', satisfied: () => midSatisfied });
+    mid.registerResolver({
+      condition: 'agreement',
+      resolve: async () => { midSatisfied = true; calls.push('agreement'); return ResolveResult.SUCCESS; },
+    });
+
+    const leaf = new ConditionRuntime(mid);
+    leaf.registerCondition({ key: 'draft', satisfied: () => leafSatisfied });
+    leaf.registerResolver({
+      condition: 'draft',
+      resolve: async () => { leafSatisfied = true; calls.push('draft'); return ResolveResult.SUCCESS; },
+    });
+
+    const target: Target = {
+      key: 'editor',
+      conditions: [
+        { condition: 'auth' },      // owned by root (grandparent)
+        { condition: 'agreement' }, // owned by mid (parent)
+        { condition: 'draft' },     // owned by leaf (self)
+      ],
+    };
+
+    // 'auth' is on the grandparent — partitionRefs must recurse past mid to find it.
+    await expect(leaf.ensure(target)).resolves.toMatchObject({ result: EnsureResult.READY });
+    // parent-first order: root resolves auth, mid resolves agreement, leaf resolves draft.
+    expect(calls).toEqual(['auth', 'agreement', 'draft']);
+  });
+
+  it('reports a parent-phase DEFERRED through the outcome deferredCondition', async () => {
     const globalFlow = new ConditionRuntime();
     globalFlow.registerCondition({ key: 'auth', satisfied: () => false });
     globalFlow.registerResolver({ condition: 'auth', resolve: async () => ResolveResult.DEFERRED });
@@ -188,7 +232,10 @@ describe('ConditionRuntime parent-child', () => {
       conditions: [{ condition: 'auth' }, { condition: 'draft' }],
     };
 
-    await expect(pageFlow.ensure(target)).resolves.toBe(EnsureResult.DEFERRED);
-    expect(pageFlow.getDeferredCondition()?.condition).toBe('auth');
+    const outcome = await pageFlow.ensure(target);
+    expect(outcome).toMatchObject({
+      result: EnsureResult.DEFERRED,
+      deferredCondition: { condition: 'auth' },
+    });
   });
 });

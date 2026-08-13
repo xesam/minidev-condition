@@ -6,6 +6,7 @@
 import type {
   Condition,
   ConditionRef,
+  EnsureOutcome,
   ResolveContext,
   Resolver,
   RuntimeView,
@@ -30,14 +31,7 @@ import { EnsureResult, ResolveResult } from './types';
 export class ConditionRuntime {
   private conditions: Map<string, Condition> = new Map();
   private resolvers: Map<string, Resolver> = new Map();
-  private inFlightEnsures: Map<string, Promise<EnsureResult>> = new Map();
-  /**
-   * The condition a resolver deferred during the most recent `ensure()`.
-   * Set when a resolver returns DEFERRED, cleared on every other outcome.
-   * Read by the caller after `ensure()` resolves DEFERRED, to know which
-   * condition to re-check when reviving the flow.
-   */
-  private deferredCondition: { condition: string; params?: Record<string, unknown> } | undefined;
+  private inFlightEnsures: Map<string, Promise<EnsureOutcome>> = new Map();
 
   /**
    * @param parent Optional parent runtime. Refs whose condition is not
@@ -51,9 +45,18 @@ export class ConditionRuntime {
 
   /**
    * Ensure all conditions in `target` are satisfied.
-   * Returns READY when all are satisfied, or CANCEL/FAILED.
+   *
+   * Returns an `EnsureOutcome` whose `result` is one of:
+   * - `READY`    — all conditions satisfied
+   * - `CANCEL`   — a resolver explicitly cancelled
+   * - `FAILED`   — a resolver failed, threw, or reported success but left the
+   *                condition unsatisfied
+   * - `DEFERRED` — a resolver kicked off a cross-page side-flow; the
+   *                `deferredCondition` field names the condition to re-check
+   *                on the next `ensure()` call (e.g. on the originating
+   *                page's next onShow / resume)
    */
-  async ensure(target: Target): Promise<EnsureResult> {
+  async ensure(target: Target): Promise<EnsureOutcome> {
     const targetKey = this.createEnsureKey(target);
     const inFlight = this.inFlightEnsures.get(targetKey);
     if (inFlight) {
@@ -101,22 +104,17 @@ export class ConditionRuntime {
 
   /**
    * Reset runtime registrations.
+   *
+   * **Warning**: This clears *all* registered conditions and resolvers on this
+   * runtime. Intended for page-scoped runtimes (those constructed with a
+   * `parent`) that are discarded when the page unloads. Calling it on an
+   * app-global (root) runtime wipes the shared registration and breaks all
+   * subsequent `ensure()` calls until conditions are re-registered.
    */
   dispose(): void {
     this.conditions.clear();
     this.resolvers.clear();
     this.inFlightEnsures.clear();
-    this.deferredCondition = undefined;
-  }
-
-  /**
-   * Which condition a resolver deferred during the most recent `ensure()`.
-   * `undefined` unless the last `ensure()` returned DEFERRED. Falls through
-   * to the parent if the parent phase was the one that deferred. Read by the
-   * caller (e.g. a page resume handler) to know what to re-check on revive.
-   */
-  getDeferredCondition(): { condition: string; params?: Record<string, unknown> } | undefined {
-    return this.deferredCondition ?? this.parent?.getDeferredCondition();
   }
 
   /**
@@ -127,48 +125,40 @@ export class ConditionRuntime {
    * over the parent (child overrides parent). A ref owned by neither is
    * a programmer error.
    */
-  private async runEnsureWithParent(target: Target): Promise<EnsureResult> {
-    try {
-      // Clear any deferred condition from a prior call on this runtime.
-      // If the parent phase defers below, this runtime's phase never runs,
-      // and getDeferredCondition() must fall through to the parent — so the
-      // local field must not hold a stale value from an earlier ensure().
-      this.deferredCondition = undefined;
+  private async runEnsureWithParent(target: Target): Promise<EnsureOutcome> {
+    const { parentOwned, selfOwned, neither } = this.partitionRefs(target.conditions);
 
-      const { parentOwned, selfOwned, neither } = this.partitionRefs(target.conditions);
-
-      if (neither.length > 0) {
-        throw new Error(
-          `No runtime owns condition "${neither[0].condition}". ` +
-          `Register it on this runtime or a parent via registerCondition().`,
-        );
-      }
-
-      if (parentOwned.length > 0 && this.parent) {
-        const result = await this.parent.ensure({
-          key: target.key,
-          conditions: parentOwned,
-        });
-        if (result !== EnsureResult.READY) {
-          return result;
-        }
-      }
-
-      if (selfOwned.length === 0) {
-        return EnsureResult.READY;
-      }
-
-      return this.runEnsure({ key: target.key, conditions: selfOwned });
-    } catch (err) {
-      console.error('[ConditionRuntime] ensure failed:', err);
-      return EnsureResult.FAILED;
+    if (neither.length > 0) {
+      return {
+        result: EnsureResult.ERROR,
+        message:
+          `条件 "${neither[0].condition}" 未在任何 runtime 上注册。` +
+          `请通过 registerCondition() 在当前 runtime 或其 parent 上注册该条件。`,
+      };
     }
+
+    if (parentOwned.length > 0 && this.parent) {
+      const parentOutcome = await this.parent.ensure({
+        key: target.key,
+        conditions: parentOwned,
+      });
+      if (parentOutcome.result !== EnsureResult.READY) {
+        // Propagate the parent's outcome (including deferredCondition when DEFERRED).
+        return parentOutcome;
+      }
+    }
+
+    if (selfOwned.length === 0) {
+      return { result: EnsureResult.READY };
+    }
+
+    return this.runEnsure({ key: target.key, conditions: selfOwned });
   }
 
   /**
    * Split refs by ownership. A ref registered on this runtime is
    * self-owned (child overrides parent); otherwise it delegates to the
-   * parent if the parent owns it; otherwise it is owned by no one.
+   * parent chain if any ancestor owns it; otherwise it is owned by no one.
    */
   private partitionRefs(refs: ConditionRef[]): {
     parentOwned: ConditionRef[];
@@ -181,7 +171,7 @@ export class ConditionRuntime {
     for (const ref of refs) {
       if (this.hasCondition(ref.condition)) {
         selfOwned.push(ref);
-      } else if (this.parent?.hasCondition(ref.condition) ?? false) {
+      } else if (this.parent?.deepHasCondition(ref.condition) ?? false) {
         parentOwned.push(ref);
       } else {
         neither.push(ref);
@@ -190,17 +180,21 @@ export class ConditionRuntime {
     return { parentOwned, selfOwned, neither };
   }
 
-  private async runEnsure(target: Target): Promise<EnsureResult> {
-    try {
-      // A non-DEFERRED outcome clears any previously deferred condition.
-      this.deferredCondition = undefined;
+  /** Whether this runtime or any ancestor has `key` registered. */
+  private deepHasCondition(key: string): boolean {
+    return this.conditions.has(key) || (this.parent?.deepHasCondition(key) ?? false);
+  }
 
+  private async runEnsure(target: Target): Promise<EnsureOutcome> {
+    try {
       // Work at the ConditionRef level so that a target may legitimately
       // contain the same condition key with different params (e.g. two
       // `feature_check` refs with different feature flags). Each ref is
       // resolved with its own params; same-key siblings stay pending for
       // their own resolution rather than being dropped together.
       let pending = this.findUnsatisfiedRefs(target.conditions);
+      // runtimeView is stateless beyond `this` — create once per ensure call.
+      const runtimeView = this.createRuntimeView();
 
       while (pending.length > 0) {
         // Pick the next ref to resolve. A ref is "ready" when none of its
@@ -210,45 +204,52 @@ export class ConditionRuntime {
         // Falls back to the first pending ref when none is ready (a real
         // dependency cycle, or an unsatisfiable external dep); the re-check
         // loop + post-resolve verification still keep the result correct.
-        const condRef =
-          pending.find((ref) => this.isReady(ref, pending)) ?? pending[0];
+        const readyRef = pending.find((ref) => this.isReady(ref, pending));
+        if (!readyRef) {
+          const keys = pending.map((r) => r.condition).join(', ');
+          console.warn(
+            `[ConditionRuntime] 检测到条件依赖循环: [${keys}]，将回退到数组顺序执行。`,
+          );
+        }
+        const condRef = readyRef ?? pending[0];
         const condKey = condRef.condition;
         const resolver = this.resolvers.get(condKey);
 
         if (!resolver) {
-          throw new Error(
-            `No resolver registered for condition "${condKey}". ` +
-            `Register one with runtime.registerResolver().`
-          );
+          return {
+            result: EnsureResult.ERROR,
+            message:
+              `条件 "${condKey}" 未注册 resolver。` +
+              `请通过 runtime.registerResolver() 注册对应的 resolver。`,
+          };
         }
 
         const ctx: ResolveContext = {
           target,
           params: condRef.params,
-          runtime: this.createRuntimeView(),
+          runtime: runtimeView,
         };
 
         const result = await resolver.resolve(ctx);
 
         if (result === ResolveResult.CANCEL) {
-          return EnsureResult.CANCEL;
+          return { result: EnsureResult.CANCEL };
         }
 
         if (result === ResolveResult.FAILED) {
-          return EnsureResult.FAILED;
+          return { result: EnsureResult.FAILED };
         }
 
         if (result === ResolveResult.DEFERRED) {
           // The resolver kicked off a side-flow (e.g. navigated to a page)
-          // and returned without satisfying the condition yet. Record which
-          // condition is pending so the caller can re-check it on revive,
-          // and stop the loop — the chain resumes on the next `ensure()`.
-          this.deferredCondition = { condition: condKey, params: condRef.params };
-          return EnsureResult.DEFERRED;
+          // and returned without satisfying the condition yet. Return the
+          // deferred condition inline so the caller never needs a separate
+          // getDeferredCondition() call — eliminating shared mutable state.
+          return { result: EnsureResult.DEFERRED, deferredCondition: condRef };
         }
 
         if (!this.isSatisfied(condKey, condRef.params)) {
-          return EnsureResult.FAILED;
+          return { result: EnsureResult.FAILED };
         }
 
         // SUCCESS — drop ONLY the ref just resolved (by identity) and
@@ -260,11 +261,16 @@ export class ConditionRuntime {
         );
       }
 
-      return EnsureResult.READY;
+      return { result: EnsureResult.READY };
     } catch (err) {
-      console.error('[ConditionRuntime] ensure failed:', err);
-      return EnsureResult.FAILED;
+      return this.failedOutcome(err);
     }
+  }
+
+  /** Log the error and return a FAILED outcome. Used by both catch blocks. */
+  private failedOutcome(err: unknown): EnsureOutcome {
+    console.error('[ConditionRuntime] 条件编排失败:', err);
+    return { result: EnsureResult.FAILED };
   }
 
   /**

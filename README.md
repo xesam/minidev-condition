@@ -20,12 +20,14 @@ condition 让开发者**声明「目标需要哪些条件」**，由运行时负
 6. [非目标](#6-非目标)
 7. [单包结构（平台无关）](#7-单包结构平台无关)
 8. [快速上手](#8-快速上手)
-   - [8.1 App 启动时注册全局条件与 resolver](#81-app-启动时注册全局条件与-resolver)
-   - [8.2 页面声明前置条件并接线生命周期](#82-页面声明前置条件并接线生命周期)
-   - [8.3 依赖排序与参数化条件](#83-依赖排序与参数化条件)
-9. [包](#9-包)
-10. [文档](#10-文档)
-11. [状态](#11-状态)
+   - [8.1 安装](#81-安装)
+   - [8.2 App 启动时注册全局条件与 resolver](#82-app-启动时注册全局条件与-resolver)
+   - [8.3 页面声明前置条件并接线生命周期](#83-页面声明前置条件并接线生命周期)
+   - [8.4 依赖排序与参数化条件](#84-依赖排序与参数化条件)
+9. [开发](#9-开发)
+10. [包](#10-包)
+11. [文档](#11-文档)
+12. [状态](#12-状态)
 
 ## 1. 在 @mini-dev 工具箱中的位置
 
@@ -120,76 +122,124 @@ examples/wechat-sample     → @mini-dev/condition   (uses wx.* directly in reso
 
 ## 8. 快速上手
 
-### 8.1 App 启动时注册全局条件与 resolver
+### 8.1 安装
+
+```bash
+npm install @mini-dev/condition
+# 或
+pnpm add @mini-dev/condition
+```
+
+### 8.2 App 启动时注册全局条件与 resolver
 
 ```ts
 import { ConditionRuntime } from '@mini-dev/condition'
 
+// 创建全局运行时实例
 const runtime = new ConditionRuntime()
+
+// 注册授权条件与 resolver
 runtime.registerCondition(authCondition)
 runtime.registerResolver(authResolver)
+
+// 注册城市选择条件与 resolver
 runtime.registerCondition(cityCondition)
 runtime.registerResolver(cityResolver)
-// ...
 
-// App 自己持有 runtime 实例，页面通过 getApp() 取用 —— 库不持有单例。
+// App 自己持有 runtime 实例，页面通过 getApp() 取用 —— 库不持有单例
 App({ globalData: { runtime } })
 ```
 
-### 8.2 页面声明前置条件并接线生命周期
+### 8.3 页面声明前置条件并接线生命周期
 
 ```ts
 import { createPrerequisiteController } from '@mini-dev/condition'
 
 const flow = createPrerequisiteController({
-  runtime: getApp().globalData.runtime,
-  key: 'pages/index/index',
-  prereqs: ['auth', 'city', 'agreement'],   // 裸字符串 → { condition }
-  onReady: () => { /* 全部满足，加载页面数据 */ },
-  onCancel: () => { /* 取消 / 失败 / 返回未满足 */ },
+  runtime: getApp().globalData.runtime,  // 获取全局 runtime
+  key: 'pages/index/index',              // 页面唯一标识
+  prereqs: ['auth', 'city', 'agreement'], // 声明前置条件（裸字符串会转为 { condition } 格式）
+  onReady: () => { 
+    // 全部条件满足，加载页面数据
+    console.log('页面就绪，开始加载数据')
+  },
+  onCancel: () => { 
+    // 用户取消 / 条件失败 / 返回时未满足
+    console.log('条件未满足，跳转回首页')
+    wx.navigateBack()
+  },
 })
 
 Page({
-  onLoad:  () => flow.start(),   // 新实例，首次求值
-  onShow:  () => flow.resume(),   // 跨页返回后复行
-  onHide:  () => flow.pause(),    // 标记已离开，供下次 resume 判定
+  onLoad()  { flow.start()  },  // 页面新实例，首次求值
+  onShow()  { flow.resume() },  // 跨页返回后复行
+  onHide()  { flow.pause()  },  // 标记已离开，供下次 resume 判定
+  onUnload() { flow.dispose() }, // 清理资源（可选）
 })
 ```
 
-跨页 resolver 自己 `wx.navigateTo` 并返回 `ResolveResult.DEFERRED`；`ensure()` 随之返回 `DEFERRED`，原页保持未就绪。用户返回时 `resume()` 复行：若延迟条件已满足则继续链，否则终止（不重复触发 side-flow，避免循环）。一个全新页面实例（`start`）总是重新尝试。
+跨页 resolver 自己触发导航（如 `wx.navigateTo`）并返回 `ResolveResult.DEFERRED`；`ensure()` 随之返回 `DEFERRED`，原页保持未就绪状态。用户返回时 `resume()` 会复行检查：若延迟条件已满足则继续链，否则终止（不重复触发跳转，避免循环）。全新页面实例（`start`）总是重新尝试。
 
-### 8.3 依赖排序与参数化条件
+### 8.4 依赖排序与参数化条件
 
 ```ts
-// auth 依赖 agreement：dependsOn 是就绪过滤，不是拓扑排序
-const authCondition = { key: 'auth', dependsOn: ['agreement'], satisfied: () => ... }
+// auth 声明依赖 agreement：dependsOn 用于就绪过滤（非拓扑排序）
+const authCondition = { 
+  key: 'auth', 
+  dependsOn: ['agreement'], 
+  satisfied: () => !!wx.getStorageSync('user_token') 
+}
 
 // 同一 condition key 可带不同 params，各自独立求值
 const target = {
   key: 'pay',
   conditions: [
-    { condition: 'auth' },
-    { condition: 'feature_check', params: { feature: 'payment_v2' } },
+    { condition: 'auth' },  // 全局授权
+    { condition: 'feature_check', params: { feature: 'payment_v2' } },  // 支付 v2 功能检查
+    { condition: 'feature_check', params: { feature: 'risk_control' } }, // 风控检查
   ],
 }
 ```
 
-页内专属条件可挂在 page flow 上（`new ConditionRuntime(globalFlow)`），随页面 `dispose()` 清理；global flow 上的条件由 parent-first 先解。条件注册在哪一档就是哪一档——没有 `scope` 标签。
+**页面级条件（parent-child）**：
+
+页面专属条件可挂在 page flow 上（`new ConditionRuntime(globalFlow)`），随页面 `dispose()` 自动清理；global flow 上的条件由 parent-first 机制优先执行。条件注册在哪个 runtime 就属于哪个作用域——没有 `scope` 标签。
 
 完整落地示例见 `examples/wechat-sample`。
 
-## 9. 包
+## 9. 开发
+
+```bash
+# 构建所有包（tsdown: ESM + CJS，各自生成对应格式的 .d.ts）
+pnpm build
+
+# 运行所有测试（vitest）
+pnpm test
+
+# 按包运行
+pnpm --filter @mini-dev/condition test
+
+# 类型检查（仅 lint，无独立 linter）
+pnpm lint
+pnpm --filter @mini-dev/condition lint   # tsc --noEmit
+
+# 按包 watch 模式
+pnpm --filter @mini-dev/condition dev     # tsdown --watch
+
+# wechat-sample e2e（需要微信开发者工具 + miniprogram-automator）
+pnpm --filter @mini-dev/condition-wechat-sample e2e
+```
+
+## 10. 包
 
 | 包名 | 说明 |
 |------|------|
 | `@mini-dev/condition` | 前置条件编排引擎 + 页面生命周期接线（`createPrerequisiteController` 等） |
 
-## 10. 文档
+## 11. 文档
 
 - [docs/02-ARCHITECTURE.md](./docs/02-ARCHITECTURE.md) — 当前架构（单包 + parent-child by registration）
 
-当前架构以 [docs/02-ARCHITECTURE.md](./docs/02-ARCHITECTURE.md) 和 [CLAUDE.md](./CLAUDE.md) 为准。
-
-## 11. 状态
+## 12. 状态
 
 **pre-release**：尚未发布到 npm。当前为单包平台无关架构（`@mini-dev/condition`）；历史上的 `flow-runtime-adapter-wx` 与 `flow-runtime-integration` 已先后移除/合并，导航与跨页回传由 resolver / 页面代码承担。示例见 `examples/wechat-sample`。

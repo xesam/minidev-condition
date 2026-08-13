@@ -16,6 +16,7 @@ export {
   EnsureResult,
   ResolveResult,
 } from './types';
+export type { EnsureOutcome } from './types';
 
 // Core engine
 export { ConditionRuntime } from './runtime';

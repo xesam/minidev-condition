@@ -24,7 +24,37 @@ export enum EnsureResult {
   FAILED = 'failed',
   /** A resolver returned DEFERRED; see {@link ResolveResult.DEFERRED}. */
   DEFERRED = 'deferred',
+  /**
+   * A programmer error was detected: a condition or resolver was not registered.
+   * Distinct from FAILED (which is a resolver-level runtime result) so callers
+   * can tell misconfiguration apart from a user action (cancel/deny).
+   * The `message` field describes what was missing.
+   */
+  ERROR = 'error',
 }
+
+/**
+ * The outcome of a `ConditionRuntime.ensure()` call.
+ *
+ * When `result` is `DEFERRED`, the `deferredCondition` field identifies
+ * which condition the resolver deferred on. This information is returned
+ * inline with the result so callers never need a separate
+ * `getDeferredCondition()` call — eliminating the two-step API and any
+ * shared-state race between concurrent `ensure()` calls on the same runtime.
+ *
+ * When `result` is `ERROR`, the `message` field describes the misconfiguration
+ * (unregistered condition or resolver). This is always a programmer error —
+ * a condition or resolver that was expected to be registered was not.
+ *
+ * For all other results, only `result` is present.
+ */
+export type EnsureOutcome =
+  | { result: EnsureResult.READY | EnsureResult.CANCEL | EnsureResult.FAILED }
+  | { result: EnsureResult.ERROR; message: string }
+  | {
+      result: EnsureResult.DEFERRED;
+      deferredCondition: { condition: string; params?: Record<string, unknown> };
+    };
 
 /**
  * A Condition describes a required state for a target to be ready.
@@ -38,7 +68,24 @@ export interface Condition {
    * @param params - Dynamic parameters from the ConditionRef (e.g. orderId).
    */
   satisfied(params?: Record<string, unknown>): boolean
-  /** Optional dependencies: these condition keys must be satisfied first */
+  /**
+   * Optional dependencies: condition keys that must be satisfied (or absent
+   * from the current target's pending set) before this condition's resolver
+   * is invoked.
+   *
+   * **Scope — target-local only**: `dependsOn` only operates within the same
+   * `Target.conditions` array. If a listed key is not present in the target
+   * being ensured, it is treated as already-satisfied for ordering purposes
+   * and does not block this condition's resolver.
+   *
+   * **Cross-layer ordering is free**: when using parent-child runtimes, all
+   * parent-owned conditions resolve to READY before any child-owned condition
+   * is attempted (parent-first guarantee). A child condition never needs to
+   * list a parent-owned condition in `dependsOn`.
+   *
+   * There is no cycle detection; if two pending conditions mutually depend on
+   * each other, the runtime falls back to array order and continues.
+   */
   dependsOn?: string[]
 }
 
