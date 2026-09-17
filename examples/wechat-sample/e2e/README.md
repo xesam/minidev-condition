@@ -25,7 +25,8 @@ e2e/
 ├── vitest.config.ts        # Sequential execution, 60s timeout
 ├── home.spec.ts            # Group A — home: privacy agreement + city
 ├── product.spec.ts         # Group B — product: login + pay(realname)
-└── resolver-targets.spec.ts # Group C — city/login/realname target pages
+├── resolver-targets.spec.ts # Group C — city/login/realname target pages
+└── startup-param.spec.ts   # Group D — external launch param completes city (compile-mode demo)
 ```
 
 Each spec file independently launches and closes the mini program.
@@ -37,3 +38,4 @@ can exist at a time.
 - `wx.showModal` is patched directly via `evaluate()` (see `helpers.ts`) — the automator cannot tap native modal buttons, and `mockWxMethod` does not reliably intercept callback-based APIs
 - `onShow` lifecycle is not directly triggerable; use `page.callMethod()` or `evaluate()` as workarounds
 - Automator requires WeChat DevTools to be open with the project loaded
+- While DevTools has the project open, it may merge personal settings (real appid, `sassSetting`) from `project.private.config.json` back into the shared `project.config.json` — that is environment noise, not a source change; restore the shared file and keep only intended edits (the compile-mode `condition` block lives in the shared file deliberately, so it ships with the repo)

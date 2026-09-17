@@ -3,7 +3,7 @@
   <view class="container">
     <view class="card" wx:if="{{ready}}">
       <view class="title">首页</view>
-      <view class="info">当前城市: {{cityName}}</view>
+      <view class="info">当前城市: {{cityName}}{{cityFromStartup ? '（来自启动参数）' : ''}}</view>
       <view class="desc">协议与城市条件均已满足</view>
       <button bindtap="goToProduct" type="primary">去商品页</button>
     </view>

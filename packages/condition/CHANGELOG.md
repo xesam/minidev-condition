@@ -1,5 +1,20 @@
 # @mini-dev/condition
 
+## 0.1.1 (2026-09-17)
+
+### 发布配置与文档
+
+- **文档权威源迁移**：完整使用文档移至本包 `README.md` 并随包分发（`files` 含 `README.md` / `CHANGELOG.md`）——npm registry 页面与 `node_modules` 内可直接阅读完整文档，跨目录引用使用 GitHub 绝对链接
+- **`files` 诚实化**：0.1.0 的 `files` 声明了不存在的 `README.md`（tarball 实际未包含）；本版起 README 物理存在于包内
+- **小程序「构建 npm」入口修正**：`miniprogram` 从目录形式（`dist/cjs`，抖音不识别）改为完整文件路径 `dist/cjs/index.js`（微信/抖音两端交集，与 `main` 同源）；新增字段锁定单测
+- 仓库根 `README.md` 精简为仓库门面（结构总览 + 指向包文档/示例）；「工具箱位置」章节只描述本库定位，完整工具箱目录指向 [xesam/minidev](https://github.com/xesam/minidev)
+- 包代码与 0.1.0 完全相同（零代码变更；本版为文档/发布配置 patch）
+
+### 仓库层（不随包分发）
+
+- `examples/wechat-sample` 新增 DevTools 编译模式「外部启动带city参数」演示：外部启动参数作为条件的**期望状态**——本地缺失则补齐、本地不同则替换、本地一致则直接就绪；resolver 免跳页落地（e2e 组 D，见 `ACCEPTANCE.md`）
+- 上述演示全程未改动库代码——补齐/替换策略反转收敛于 `Condition.satisfied` 的参数化求值，`packages/condition` 自 0.1.0 起零变更
+
 ## 0.1.0 (2026-08-13)
 
 ### 首次发布
