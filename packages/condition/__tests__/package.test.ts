@@ -21,7 +21,8 @@ describe('package.json 小程序发布配置', () => {
   });
 
   it('miniprogram 与 main 同源 — 同一份纯 CJS 入口', () => {
-    expect(pkg.main.endsWith(pkg.miniprogram)).toBe(true);
+    // main 声明带 "./" 前缀，miniprogram 不带；strip 使声明风格差异可见。
+    expect(pkg.main.replace(/^\.\//, '')).toBe(pkg.miniprogram);
   });
 
   it('files 覆盖 dist — miniprogram 指向的产物随包分发', () => {

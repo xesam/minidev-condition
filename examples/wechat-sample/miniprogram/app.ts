@@ -5,12 +5,13 @@
 // condition does NOT own navigation or cross-page result relay —
 // resolvers trigger navigation themselves (with whatever router the app
 // uses) and return DEFERRED; the originating page revives via onShow.
-// So there is no navigator singleton to wire here.
+// So there is no navigator singleton to wire here. Likewise the library
+// wires no page-UI bridge: in-call resolvers reach the controller's initiating
+// page through the owner channel (see pages/index + agreement resolver).
 // ============================================================
 
 import { ConditionRuntime } from '@mini-dev/condition';
-import { registerAllConditions } from './conditions/index';
-import { registerAllResolvers } from './resolvers/index';
+import { registerAllConditions, registerAllResolvers } from './conditions/index';
 
 // Create the app-level runtime instance. Register all conditions and
 // resolvers, then expose it via globalData so pages can reach it through

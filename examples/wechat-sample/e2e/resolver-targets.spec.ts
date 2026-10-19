@@ -7,7 +7,7 @@
  */
 import automator from 'miniprogram-automator';
 import {
-  clearAllState, navigateTo, restoreModalMock, sleep,
+  clearAllState, navigateTo, sleep,
 } from './helpers';
 
 type MiniProgram = Awaited<ReturnType<typeof automator.launch>>;
@@ -22,7 +22,6 @@ beforeAll(async () => {
 afterAll(async () => { await mp?.close(); });
 beforeEach(async () => {
   await clearAllState(mp);
-  await restoreModalMock(mp);
 });
 
 describe('C. Resolver 目标页（写 storage + navigateBack）', () => {

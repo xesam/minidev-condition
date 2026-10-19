@@ -1,7 +1,7 @@
 // ============================================================
 // @mini-dev/condition - Page-edge prerequisite helpers
 // Platform-free sugar over Target + a resume handler that revives
-// a deferred flow when the user returns to the originating page.
+// a deferred controller when the user returns to the originating page.
 //
 // Pure core has no concept of page lifecycle (onLoad/onShow/onHide).
 // These helpers translate page lifecycle into explicit ensure() calls
@@ -22,7 +22,7 @@ import type { EnsureOutcome } from './types';
 export type PrerequisiteRef = string | ConditionRef;
 
 /** Runtime surface a page-edge helper needs. A {@link ConditionRuntime} satisfies it
- *  — whether it's the app-level global flow or a page flow with a parent. */
+ *  — whether it's the app-level global runtime or a page-scoped runtime with a parent. */
 export interface PrerequisiteRuntime {
   ensure(target: Target): Promise<EnsureOutcome>;
   isSatisfied(key: string, params?: Record<string, unknown>): boolean;
@@ -37,15 +37,31 @@ export function normalizePrerequisites(
   );
 }
 
-/** Build a core `Target` from a page-edge `PrerequisiteRef[]`. */
-export function createTarget(key: string, prereqs: PrerequisiteRef[]): Target {
+/** Build a core `Target` from page-edge prereqs and (optionally) the controller owner. */
+export function createTarget(
+  key: string,
+  prereqs: PrerequisiteRef[],
+  owner?: unknown,
+): Target {
   return {
     key,
     conditions: normalizePrerequisites(prereqs),
+    owner,
   };
 }
 
 // ---- Resume handler (start / resume / pause / dispose) ----
+
+/**
+ * The outcome passed to {@link PrerequisiteControllerOptions.onCancel} when
+ * the controller terminates. Mirrors core `EnsureOutcome`'s CANCEL/FAILED branches:
+ * the `cancelledCondition`/`failedCondition` field identifies which condition
+ * the controller terminated on, so a page with multiple prerequisites can branch
+ * per-condition failure policies without splitting into multiple controllers.
+ */
+export type CancelOutcome =
+  | { result: EnsureResult.CANCEL; cancelledCondition: ConditionRef }
+  | { result: EnsureResult.FAILED; failedCondition?: ConditionRef };
 
 /**
  * Options for {@link createPrerequisiteController}.
@@ -57,18 +73,43 @@ export interface PrerequisiteControllerOptions {
   key: string;
   /** Prerequisites the page needs satisfied before it is ready. */
   prereqs: PrerequisiteRef[];
-  /** Called once the flow reaches READY (all prerequisites satisfied). */
+  /**
+   * The initiator of this controller — usually `this` (the page/component
+   * instance that owns the controller's lifecycle). Passed through opaquely to
+   * resolvers via `ResolveContext.owner`, so an in-call resolver that
+   * drives page-owned UI (overlay, custom dialog) reaches the initiating
+   * page through typed context instead of global state. Optional;
+   * resolvers should handle a missing owner explicitly (e.g. FAILED).
+   */
+  owner?: unknown;
+  /** Called once the controller reaches READY (all prerequisites satisfied). */
   onReady: () => void;
   /**
-   * Called when the flow terminates — either a resolver returned CANCEL /
+   * Called when the controller terminates — either a resolver returned CANCEL /
    * FAILED, or a deferred condition was still unsatisfied when the user
    * returned to the page (denied / went back). Optional.
+   *
+   * The outcome identifies which condition the controller terminated on, e.g.
+   * ```ts
+   * onCancel: (outcome) => {
+   *   if (outcome.result === EnsureResult.CANCEL
+   *       && outcome.cancelledCondition.condition === 'agreement') {
+   *     wx.exitMiniProgram({});
+   *   } else {
+   *     controller.start(); // re-attempt a retryable condition
+   *   }
+   * }
+   * ```
+   * NOTE: calling `start()` from `onCancel` re-runs the controller from the top;
+   * satisfied conditions are skipped, so this is the per-condition retry
+   * path. Loop protection is the caller's responsibility — a resolver that
+   * immediately re-defers would otherwise loop.
    */
-  onCancel?: () => void;
+  onCancel?: (outcome: CancelOutcome) => void;
 }
 
 /**
- * Lifecycle handlers that run a prerequisite flow and revive it across
+ * Lifecycle handlers that run a prerequisite controller and revive it across
  * cross-page side-flows.
  *
  * The contract:
@@ -78,9 +119,9 @@ export interface PrerequisiteControllerOptions {
  * - A resolver that needs another page triggers the navigation itself and
  *   returns DEFERRED. `ensure()` then returns an outcome with
  *   `result: DEFERRED` and `deferredCondition` identifying which condition
- *   to re-check. When the user returns (resume after pause), the flow
+ *   to re-check. When the user returns (resume after pause), the controller
  *   revives: if the deferred condition is now satisfied, the chain
- *   continues; if not, the flow terminates (the user denied / abandoned).
+ *   continues; if not, the controller terminates (the user denied / abandoned).
  *
  * The condition library does NOT own navigation or cross-page result
  * relay — the resolver triggers navigation with whatever router the app
@@ -88,10 +129,12 @@ export interface PrerequisiteControllerOptions {
  *
  * Wire the returned handlers into the page/component lifecycle:
  * ```ts
- * const flow = createPrerequisiteController({ runtime, key, prereqs, onReady });
+ * const controller = createPrerequisiteController({
+ *   runtime, key, prereqs, owner: this, onReady,
+ * });
  * Page({
- *   onLoad: flow.start, onShow: flow.resume,
- *   onHide: flow.pause, onUnload: flow.dispose,
+ *   onLoad: controller.start, onShow: controller.resume,
+ *   onHide: controller.pause, onUnload: controller.dispose,
  * });
  * ```
  */
@@ -103,8 +146,8 @@ export function createPrerequisiteController(
   pause: () => void;
   dispose: () => void;
 } {
-  const { runtime, key, prereqs, onReady, onCancel } = opts;
-  const target = createTarget(key, prereqs);
+  const { runtime, key, prereqs, owner, onReady, onCancel } = opts;
+  const target = createTarget(key, prereqs, owner);
 
   // Per-page-instance state. A fresh page instance (start) resets these,
   // so a re-launched page always gets a fresh attempt — no stale "denied"
@@ -123,11 +166,22 @@ export function createPrerequisiteController(
       // The deferred condition is returned inline — no separate
       // getDeferredCondition() call needed, and no shared-state race.
       deferred = outcome.deferredCondition;
-    } else {
-      // CANCEL / FAILED — the chain stopped.
+    } else if (outcome.result === EnsureResult.ERROR) {
+      // Programmer error (unregistered condition/resolver, dependency
+      // cycle) — not a user action. Surface it and terminate; onCancel is
+      // for user-driven/controller outcomes only.
       deferred = null;
       terminated = true;
-      onCancel?.();
+      console.error(
+        `[PrerequisiteController] Controller "${key}" terminated on a programmer error: ${outcome.message}`,
+      );
+    } else {
+      // CANCEL / FAILED — the chain stopped. The outcome identifies which
+      // condition terminated the controller (mirrors the DEFERRED branch's
+      // deferredCondition) so callers can branch per-condition policies.
+      deferred = null;
+      terminated = true;
+      onCancel?.(outcome);
     }
   }
 
@@ -141,7 +195,7 @@ export function createPrerequisiteController(
     resume() {
       // Revive only when awaiting a deferred condition AND we genuinely left
       // the page (a prior pause) since deferring. The initial resume right
-      // after start is skipped — seenHide is still false — so the flow
+      // after start is skipped — seenHide is still false — so the controller
       // started in start is not re-triggered.
       if (!deferred || terminated) return;
       if (!seenHide) return;
@@ -152,10 +206,15 @@ export function createPrerequisiteController(
       } else {
         // User returned without satisfying the deferred condition
         // (denied / went back). Terminate rather than re-triggering the
-        // side-flow, which would otherwise loop.
+        // side-flow, which would otherwise loop. Report the deferred ref
+        // as the cancelledCondition so per-condition policies work here too.
+        const cancelledCondition: ConditionRef = deferred;
         deferred = null;
         terminated = true;
-        onCancel?.();
+        onCancel?.({
+          result: EnsureResult.CANCEL,
+          cancelledCondition,
+        });
       }
     },
     pause() {

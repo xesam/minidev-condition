@@ -10,7 +10,7 @@
  *   the local city in-place (SUCCESS), no navigation.
  * - D3 regression, no param: original DEFERRED path — lands on city page.
  * - D4 param + agreement missing: overlay first (param never bypasses the
- *   agreement flow); after agreeing, city completes without leaving home.
+ *   agreement controller); after agreeing, city completes without leaving home.
  * - D5 after landing, re-enter without param: ready from storage, no
  *   annotation — the landed storage, not the transient param, is the signal.
  *
@@ -55,7 +55,7 @@ describe('D. 外部启动参数补齐城市（编译模式演示）', () => {
     const page = await reLaunchTo(mp, '/pages/index/index?city=杭州');
     await sleep(500);
 
-    // Resolver returned SUCCESS — the flow never left the home page.
+    // Resolver returned SUCCESS — the controller never left the home page.
     expect(page.path).toBe('pages/index/index');
     const after = await mp.currentPage();
     expect(after?.path).toBe('pages/index/index');

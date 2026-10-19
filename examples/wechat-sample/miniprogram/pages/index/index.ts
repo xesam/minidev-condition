@@ -1,20 +1,30 @@
 // ============================================================
-// Demo: Home Page (realistic flow)
-// Two flows run in sequence:
-//   1. agreement flow (prereq [agreement]) — custom in-page overlay.
-//      - 同意 → onReady → start the city flow.
-//      - 不同意 → onCancel → wx.exitMiniProgram.
-//   2. city flow (prereq [city]) — resolver forks on params:
-//      - 启动参数带 city（DevTools 编译模式「外部启动带city参数」）→
-//        resolver 消费 params.externalCity，免跳页直接落地（SUCCESS）。
-//      - 无参数 → 跳城市选择页（DEFERRED）；返回未选 → onCancel →
-//        flow.start() 重置 → 自动再跳城市页（"重新执行城市流程"）。
+// Demo: Home Page (realistic journey) — ONE controller, ordered prereqs.
+//   prereqs: [agreement, city] — array order is the evaluation order,
+//   so agreement resolves first, then city.
+//     - agreement (in-page overlay): 同意 → chain continues to city;
+//       不同意 → onCancel(cancelledCondition = agreement) → exit.
+//     - city: resolver forks on params —
+//       启动参数带 city（DevTools 编译模式「外部启动带city参数」）→
+//       resolver 消费 params.externalCity，免跳页直接落地（SUCCESS）。
+//       无参数 → 跳城市选择页（DEFERRED）；返回未选 →
+//       onCancel(cancelledCondition = city) → controller.start() 重置 →
+//       自动再跳城市页（"重新执行城市流程"）。
 //
-// The agreement resolver drives page-owned UI via the
-// globalData.presentAgreement() hook the home page registers here.
+// The per-condition failure policies (exit vs retry) live in ONE onCancel
+// branch — the outcome identifies which condition terminated the controller, so
+// the page does NOT need to split into two chained flows.
+//
+// The agreement resolver drives page-owned UI through the owner channel:
+// the journey below declares `owner: this`, so the resolver receives THIS
+// page instance via ResolveContext.owner and calls presentAgreement() —
+// a normal method, no globalData registration, no cleanup on unload.
 // ============================================================
 
-import { createPrerequisiteController } from '@mini-dev/condition';
+import {
+  createPrerequisiteController,
+  EnsureResult,
+} from '@mini-dev/condition';
 import { logLifecycle } from '../../utils/logger';
 
 Component({
@@ -33,35 +43,25 @@ Component({
       const app = getApp();
 
       // External launch param (custom compile mode「外部启动带city参数」):
-      // inject a non-empty launch query's city into the city flow's params
+      // inject a non-empty launch query's city into the city controller's params
       // — the ConditionRef.params → ResolveContext.params channel. Absent/
       // empty param → bare ref, original navigation path. The param is the
       // DESIRED state: CityCondition.satisfied(params) does an EXACT match,
       // so a local city that differs reads as unsatisfied and the resolver
-      // REPLACES it (not just fills the gap) — see conditions/city.ts.
+      // REPLACES it (not just fills the gap) — see conditions/city.condition.ts.
       const externalCity = options?.city || undefined;
 
-      // Register the overlay hook the agreement resolver awaits.
-      // The resolver calls presentAgreement(); the page shows the overlay
-      // and the 同意/不同意 buttons resolve the returned promise.
-      app.globalData.presentAgreement = () =>
-        new Promise<boolean>((resolve) => {
-          this.setData({ showAgreement: true });
-          (this as any)._resolveAgreement = resolve;
-        });
-
-      // 2. city flow — created first so the agreement flow's onReady can
-      // start it. On cancel (returned without selecting) it re-attempts,
-      // which re-navigates to the city page automatically.
-      const cityFlow = createPrerequisiteController({
+      // The journey: agreement first, then city. Failure policies branch
+      // per-condition inside onCancel — no controller splitting, no chaining.
+      // `owner: this` hands the initiating page to resolvers: the
+      // agreement resolver reaches the overlay via this.presentAgreement().
+      const journey = createPrerequisiteController({
         runtime: app.globalData.runtime,
-        key: 'pages/index/index#city',
-        // Parameterized ref when the launch query carries a city; bare
-        // string otherwise — normalizePrerequisites bridges both to core's
-        // strict ConditionRef[].
+        key: 'pages/index/index',
+        owner: this,
         prereqs: externalCity
-          ? [{ condition: 'city', params: { externalCity } }]
-          : ['city'],
+          ? ['agreement', { condition: 'city', params: { externalCity } }]
+          : ['agreement', 'city'],
         onReady: () => {
           const city = wx.getStorageSync('__demo_city') || '未知';
           // Annotate when the ready city equals the external launch param —
@@ -71,39 +71,34 @@ Component({
           const fromStartup = !!externalCity && city === externalCity;
           this.setData({ ready: true, cityName: city, cityFromStartup: fromStartup });
         },
-        onCancel: () => {
-          // City not selected on return → re-attempt (auto re-navigate).
-          cityFlow.start();
-        },
-      });
-      (this as any).cityFlow = cityFlow;
-
-      // 1. agreement flow — runs first. On ready, kicks off the city flow.
-      const agreementFlow = createPrerequisiteController({
-        runtime: app.globalData.runtime,
-        key: 'pages/index/index#agreement',
-        prereqs: ['agreement'],
-        onReady: () => {
-          cityFlow.start();
-        },
-        onCancel: () => {
-          // Agreement denied → exit the mini program.
-          try {
-            (wx as any).exitMiniProgram({});
-          } catch (e) {
-            /* exitMiniProgram unavailable in some contexts */
+        onCancel: (outcome) => {
+          const blocked =
+            outcome.result === EnsureResult.CANCEL
+              ? outcome.cancelledCondition.condition
+              : outcome.failedCondition?.condition;
+          if (blocked === 'agreement') {
+            // Agreement denied → exit the mini program.
+            try {
+              (wx as any).exitMiniProgram({});
+            } catch (e) {
+              /* exitMiniProgram unavailable in some contexts */
+            }
+          } else {
+            // City not selected on return → re-attempt (auto re-navigate).
+            // Safe: the user actively navigated back; satisfied conditions
+            // (agreement) are skipped on re-run.
+            journey.start();
           }
         },
       });
-      (this as any).agreementFlow = agreementFlow;
+      (this as any).journey = journey;
 
-      agreementFlow.start();
+      journey.start();
     },
 
     onShow() {
       logLifecycle('Index', 'onShow');
-      (this as any).agreementFlow?.resume();
-      (this as any).cityFlow?.resume();
+      (this as any).journey?.resume();
     },
 
     onReady() {
@@ -112,15 +107,31 @@ Component({
 
     onHide() {
       logLifecycle('Index', 'onHide');
-      (this as any).agreementFlow?.pause();
-      (this as any).cityFlow?.pause();
+      (this as any).journey?.pause();
     },
 
     onUnload() {
       logLifecycle('Index', 'onUnload');
-      (this as any).agreementFlow?.dispose();
-      (this as any).cityFlow?.dispose();
-      delete getApp().globalData.presentAgreement;
+      // Resolve the pending overlay promise BEFORE disposing: the
+      // in-call resolver is still awaiting it — an unhandled pending
+      // promise would hang ensure() (and its in-flight dedup entry)
+      // forever. The owner of the promise is the owner of its cancel.
+      // Note: resolving false walks the resolver's CANCEL path, so
+      // onCancel may still fire AFTER dispose — it only branches to
+      // exit/retry callbacks, no page state is touched.
+      (this as any)._resolveAgreement?.(false);
+      (this as any)._resolveAgreement = null;
+      (this as any).journey?.dispose();
+    },
+
+    // The in-page overlay the agreement resolver drives through the owner
+    // channel. Shows the overlay, returns a promise the 同意/不同意
+    // buttons (onAgree/onDeny) resolve — the page owns its promise.
+    presentAgreement(): Promise<boolean> {
+      return new Promise<boolean>((resolve) => {
+        this.setData({ showAgreement: true });
+        (this as any)._resolveAgreement = resolve;
+      });
     },
 
     onAgree() {

@@ -103,7 +103,11 @@ describe('ConditionRuntime parent-child', () => {
       conditions: [{ condition: 'auth' }, { condition: 'draft' }],
     };
 
-    await expect(pageFlow.ensure(target)).resolves.toMatchObject({ result: EnsureResult.CANCEL });
+    await expect(pageFlow.ensure(target)).resolves.toMatchObject({
+      result: EnsureResult.CANCEL,
+      // Identity survives the parent → child propagation unchanged.
+      cancelledCondition: { condition: 'auth' },
+    });
     expect(pageResolverCalled).toBe(false);
   });
 
@@ -237,5 +241,34 @@ describe('ConditionRuntime parent-child', () => {
       result: EnsureResult.DEFERRED,
       deferredCondition: { condition: 'auth' },
     });
+  });
+
+  it('forwards owner to a parent-registered resolver serving a child-initiated ensure', async () => {
+    let seenOwner: unknown = 'unset';
+    let authSatisfied = false;
+
+    const globalFlow = new ConditionRuntime();
+    globalFlow.registerCondition({ key: 'auth', satisfied: () => authSatisfied });
+    globalFlow.registerResolver({
+      condition: 'auth',
+      resolve: async (ctx) => {
+        seenOwner = ctx.owner;
+        authSatisfied = true; // complete the in-call resolution
+        return ResolveResult.SUCCESS;
+      },
+    });
+
+    const pageFlow = new ConditionRuntime(globalFlow);
+    pageFlow.registerCondition({ key: 'draft', satisfied: () => true });
+
+    const target: Target = {
+      key: 'checkout',
+      conditions: [{ condition: 'auth' }],
+      owner: { tag: 'page-instance' },
+    };
+
+    await expect(pageFlow.ensure(target)).resolves.toMatchObject({ result: EnsureResult.READY });
+    // The parent-layer resolver must still see the controller's originating page.
+    expect(seenOwner).toEqual({ tag: 'page-instance' });
   });
 });

@@ -1,7 +1,7 @@
 // ============================================================
 // Demo: Login Condition
-// Checks if the user has logged in. Realistic flow: the product page
-// requires login on entry (page-edge flow). A separate realname flow
+// Checks if the user has logged in. Realistic path: the product page
+// requires login on entry (page-edge controller). A separate realname controller
 // runs later, triggered by the "支付" button.
 // ============================================================
 

@@ -1,6 +1,6 @@
 {
   "name": "@mini-dev/condition",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "小程序前置条件编排引擎 — 声明页面需要哪些条件，运行时自动判断、串行补齐并返回结果 | Prerequisite orchestration engine for mini-programs",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",

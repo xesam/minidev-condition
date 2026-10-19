@@ -9,12 +9,13 @@
 //     just lands the desired state), return SUCCESS. No navigation,
 //     no DEFERRED.
 //   - No param: navigation to the city selection page (DEFERRED).
-//     See login.ts for the DEFERRED contract.
+//     See login.resolver.ts for the DEFERRED contract.
 // ============================================================
 
 import type { ResolveContext } from '@mini-dev/condition';
 import { ResolveResult } from '@mini-dev/condition';
 import type { Resolver } from '@mini-dev/condition';
+import { deferredNavigateTo } from '../utils/nav';
 
 export class CityResolver implements Resolver {
   condition = 'city';
@@ -30,9 +31,8 @@ export class CityResolver implements Resolver {
       wx.setStorageSync('__demo_city', externalCity);
       return ResolveResult.SUCCESS;
     }
-    // 300ms before navigateTo — see login.ts: on revive, an immediate
-    // wx.navigateTo is dropped while the back transition is still settling.
-    setTimeout(() => wx.navigateTo({ url: '/pages/city/city' }), 300);
+    // Why the helper defers + logs: see utils/nav.ts.
+    deferredNavigateTo('/pages/city/city');
     return ResolveResult.DEFERRED;
   }
 }

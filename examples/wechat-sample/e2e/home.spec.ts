@@ -1,5 +1,5 @@
 /**
- * E2E: Home page realistic flow (ACCEPTANCE.md Group A)
+ * E2E: Home page realistic journey (ACCEPTANCE.md Group A)
  *
  * Tests privacy agreement (custom overlay) → city orchestration.
  * - A1 all satisfied: no overlay, ready immediately.
@@ -11,7 +11,7 @@
 import automator from 'miniprogram-automator';
 import {
   clearAllState, mockExitMiniProgram, presetHomeReady, reLaunchTo,
-  restoreExitMock, restoreModalMock, setStorage, sleep, wasExitCalled,
+  restoreExitMock, setStorage, sleep, wasExitCalled,
 } from './helpers';
 
 type MiniProgram = Awaited<ReturnType<typeof automator.launch>>;
@@ -26,7 +26,6 @@ beforeAll(async () => {
 afterAll(async () => { await mp?.close(); });
 beforeEach(async () => {
   await clearAllState(mp);
-  await restoreModalMock(mp);
   await restoreExitMock(mp);
 });
 
@@ -38,6 +37,9 @@ describe('A. 首页：隐私协议 + 城市', () => {
     expect(await page.$('.loading')).toBeNull();
     const info = await page.$('.info');
     expect(await info?.text()).toContain('当前城市');
+    // The preset city must actually render — a regression that leaves
+    // cityName empty would otherwise pass with the prefix alone.
+    expect(await info?.text()).toContain('Beijing');
     const btn = await page.$('button');
     expect(await btn?.text()).toBe('去商品页');
     expect(page.path).toBe('pages/index/index');
@@ -81,7 +83,9 @@ describe('A. 首页：隐私协议 + 城市', () => {
     await sleep(2000);
     let page = await mp.currentPage();
     expect(page?.path).toBe('pages/city/city');
-    expect(await page!.$('.overlay')).toBeNull(); // overlay is on home, not city
+    // Distinguish "arrived at the city page" from "tap never landed":
+    // the picker's real DOM must be present, not just an inert path.
+    expect(await (await page!.$('.title'))?.text()).toBe('请选择城市');
     const cityItem = await page!.$('.item');
     await cityItem?.tap();
     await sleep(1500);

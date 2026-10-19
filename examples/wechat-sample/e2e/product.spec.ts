@@ -1,5 +1,5 @@
 /**
- * E2E: Product page realistic flow (ACCEPTANCE.md Group B)
+ * E2E: Product page realistic journey (ACCEPTANCE.md Group B)
  *
  * Two phases: login (page-edge) + realname (action-triggered by 支付).
  * - B1 all satisfied: ready, 支付 → success immediately.
@@ -11,7 +11,7 @@
 import automator from 'miniprogram-automator';
 import {
   clearAllState, presetProductReady, reLaunchTo,
-  restoreModalMock, setStorage, sleep,
+  setStorage, sleep,
 } from './helpers';
 
 type MiniProgram = Awaited<ReturnType<typeof automator.launch>>;
@@ -26,7 +26,6 @@ beforeAll(async () => {
 afterAll(async () => { await mp?.close(); });
 beforeEach(async () => {
   await clearAllState(mp);
-  await restoreModalMock(mp);
 });
 
 describe('B. 商品页：登录 + 支付(实名)', () => {

@@ -10,7 +10,7 @@ type MiniProgram = Awaited<ReturnType<typeof automator.launch>>;
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** All demo storage keys cleared/set by helpers. */
-export const STORAGE_KEYS = [
+const STORAGE_KEYS = [
   '__demo_agreement',
   '__demo_city',
   '__demo_login',
@@ -94,50 +94,6 @@ export async function reLaunchTo(
   return page;
 }
 
-// ---- Modal helpers ----
-// mockWxMethod does not reliably intercept callback-based APIs like wx.showModal.
-// We patch wx.showModal directly via evaluate() to auto-resolve the callbacks.
-
-/** Patch wx.showModal to auto-confirm (calls success callback with confirm:true). */
-export async function mockModalConfirm(mp: MiniProgram): Promise<void> {
-  await mp.evaluate(() => {
-    (wx as any).__originalShowModal = wx.showModal;
-    (wx as any).showModal = (options: any) => {
-      if (options.success) {
-        options.success({ confirm: true, cancel: false });
-      }
-      if (options.complete) {
-        options.complete({ confirm: true, cancel: false });
-      }
-    };
-  });
-}
-
-/** Patch wx.showModal to auto-cancel (calls success callback with confirm:false). */
-export async function mockModalCancel(mp: MiniProgram): Promise<void> {
-  await mp.evaluate(() => {
-    (wx as any).__originalShowModal = wx.showModal;
-    (wx as any).showModal = (options: any) => {
-      if (options.success) {
-        options.success({ confirm: false, cancel: true });
-      }
-      if (options.complete) {
-        options.complete({ confirm: false, cancel: true });
-      }
-    };
-  });
-}
-
-/** Restore the original wx.showModal. */
-export async function restoreModalMock(mp: MiniProgram): Promise<void> {
-  await mp.evaluate(() => {
-    if ((wx as any).__originalShowModal) {
-      wx.showModal = (wx as any).__originalShowModal;
-      delete (wx as any).__originalShowModal;
-    }
-  });
-}
-
 // ---- exitMiniProgram mock ----
 // The home page calls wx.exitMiniProgram when the privacy agreement is
 // denied. In the automator that would tear down the session, so we patch
@@ -170,16 +126,4 @@ export async function restoreExitMock(mp: MiniProgram): Promise<void> {
     }
     wx.removeStorageSync('__demo_exit_called');
   });
-}
-
-// ---- Element / assertion helpers ----
-
-/** Get an element's text content. */
-export async function getElementText(
-  page: NonNullable<Awaited<ReturnType<MiniProgram['currentPage']>>>,
-  selector: string,
-): Promise<string> {
-  const el = await page.$(selector);
-  if (!el) return '';
-  return (await el.text()) || '';
 }

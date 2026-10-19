@@ -37,7 +37,11 @@
     "condition": true,
     "swc": false,
     "disableSWC": true,
-    "disableUseStrict": false
+    "disableUseStrict": false,
+    "sassSetting": {
+      "sassCommonUseFilePath": "global.sass",
+      "scssCommonUseFilePath": "global.scss"
+    }
   },
   "simulatorType": "wechat",
   "simulatorPluginLibVersion": {},
@@ -64,5 +68,5 @@
     "ignore": [],
     "include": []
   },
-  "appid": "your-appid"
+  "appid": "wx9029e39ac1befc18"
 }

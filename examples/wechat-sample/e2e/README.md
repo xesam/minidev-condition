@@ -4,7 +4,7 @@
 
 1. **WeChat DevTools** installed (macOS: `/Applications/wechatwebdevtools.app`)
 2. **Service port enabled** in DevTools: Settings → Security → Service Port (open)
-3. **Project built**: `pnpm build` from the wechat-sample directory
+3. **Project built**: `pnpm build` from the repo root (or `packages/condition`) so the sample's local dependency resolves against a fresh `dist/`
 4. **WeChat DevTools CLI**: Ensure `/Applications/wechatwebdevtools.app/Contents/MacOS/cli` exists
 
 ## Running
@@ -21,10 +21,12 @@ pnpm e2e:watch
 
 ```
 e2e/
-├── helpers.ts              # Storage manipulation, navigation, modal/exit mocking
+├── helpers.ts              # Storage manipulation, navigation, exit mocking
 ├── vitest.config.ts        # Sequential execution, 60s timeout
+├── env.d.ts                # Ambient `wx` / `getApp` globals for evaluate() callbacks
+├── tsconfig.json           # Standalone tsconfig for the Node-side specs
 ├── home.spec.ts            # Group A — home: privacy agreement + city
-├── product.spec.ts         # Group B — product: login + pay(realname)
+├── product.spec.ts          # Group B — product: login + pay(realname)
 ├── resolver-targets.spec.ts # Group C — city/login/realname target pages
 └── startup-param.spec.ts   # Group D — external launch param completes city (compile-mode demo)
 ```
@@ -35,7 +37,7 @@ can exist at a time.
 
 ## Known limitations
 
-- `wx.showModal` is patched directly via `evaluate()` (see `helpers.ts`) — the automator cannot tap native modal buttons, and `mockWxMethod` does not reliably intercept callback-based APIs
+- The privacy overlay is regular page DOM, so the specs can tap its buttons directly; native `wx.showModal` is not automatable (the automator cannot tap native modal buttons) and the demo avoids relying on it
 - `onShow` lifecycle is not directly triggerable; use `page.callMethod()` or `evaluate()` as workarounds
 - Automator requires WeChat DevTools to be open with the project loaded
 - While DevTools has the project open, it may merge personal settings (real appid, `sassSetting`) from `project.private.config.json` back into the shared `project.config.json` — that is environment noise, not a source change; restore the shared file and keep only intended edits (the compile-mode `condition` block lives in the shared file deliberately, so it ships with the repo)

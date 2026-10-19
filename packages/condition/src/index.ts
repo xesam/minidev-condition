@@ -29,6 +29,7 @@ export {
   normalizePrerequisites,
 } from './prerequisites';
 export type {
+  CancelOutcome,
   PrerequisiteControllerOptions,
   PrerequisiteRef,
   PrerequisiteRuntime,

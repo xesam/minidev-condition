@@ -30,7 +30,11 @@ import { EnsureResult, ResolveResult } from './types';
  */
 export class ConditionRuntime {
   private conditions: Map<string, Condition> = new Map();
-  private resolvers: Map<string, Resolver> = new Map();
+  // Internal seam: app-side resolvers declare their own narrowed TOwner;
+  // `any` here is the single type-widening point inside the library —
+  // method bivariance lets every Resolver<T> flow in, and calls pass any ctx.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private resolvers: Map<string, Resolver<any>> = new Map();
   private inFlightEnsures: Map<string, Promise<EnsureOutcome>> = new Map();
 
   /**
@@ -54,7 +58,13 @@ export class ConditionRuntime {
    * - `DEFERRED` — a resolver kicked off a cross-page side-flow; the
    *                `deferredCondition` field names the condition to re-check
    *                on the next `ensure()` call (e.g. on the originating
-   *                page's next onShow / resume)
+   *                page's onShow / resume)
+   * - `ERROR`    — a programmer error: an unregistered condition/resolver,
+   *                or a `dependsOn` cycle; the `message` field says what
+   *
+   * `target.owner`, when present, is passed through opaquely to resolvers
+   * via `ResolveContext.owner` (including across parent delegation). It is
+   * not part of the in-flight dedup key — `key` identifies the caller.
    */
   async ensure(target: Target): Promise<EnsureOutcome> {
     const targetKey = this.createEnsureKey(target);
@@ -83,8 +93,8 @@ export class ConditionRuntime {
   /**
    * Register a resolver with the runtime.
    */
-  registerResolver(resolver: Resolver): void {
-    this.resolvers.set(resolver.condition, resolver);
+  registerResolver(resolver: Resolver<unknown /* bivariant: accepts any TOwner */>): void {
+    this.resolvers.set(resolver.condition, resolver as Resolver<any>);
   }
 
   /**
@@ -132,8 +142,8 @@ export class ConditionRuntime {
       return {
         result: EnsureResult.ERROR,
         message:
-          `条件 "${neither[0].condition}" 未在任何 runtime 上注册。` +
-          `请通过 registerCondition() 在当前 runtime 或其 parent 上注册该条件。`,
+          `Condition "${neither[0].condition}" is not registered on this runtime or any parent. ` +
+          `Register it via runtime.registerCondition().`,
       };
     }
 
@@ -141,6 +151,9 @@ export class ConditionRuntime {
       const parentOutcome = await this.parent.ensure({
         key: target.key,
         conditions: parentOwned,
+        // Forward the initiator so a parent-registered resolver serving a
+        // child-initiated ensure still sees who started the ensure call.
+        owner: target.owner,
       });
       if (parentOutcome.result !== EnsureResult.READY) {
         // Propagate the parent's outcome (including deferredCondition when DEFERRED).
@@ -152,7 +165,7 @@ export class ConditionRuntime {
       return { result: EnsureResult.READY };
     }
 
-    return this.runEnsure({ key: target.key, conditions: selfOwned });
+    return this.runEnsure({ key: target.key, conditions: selfOwned, owner: target.owner });
   }
 
   /**
@@ -201,17 +214,20 @@ export class ConditionRuntime {
         // declared `dependsOn` are also pending — so a condition whose
         // dependency is in the same target resolves after that dependency,
         // while dependencies outside the target are ignored for ordering.
-        // Falls back to the first pending ref when none is ready (a real
-        // dependency cycle, or an unsatisfiable external dep); the re-check
-        // loop + post-resolve verification still keep the result correct.
+        // If no ref is ready, the pending refs form a dependency cycle —
+        // a programmer error, surfaced as ERROR rather than executed in
+        // an arbitrary order.
         const readyRef = pending.find((ref) => this.isReady(ref, pending));
         if (!readyRef) {
           const keys = pending.map((r) => r.condition).join(', ');
-          console.warn(
-            `[ConditionRuntime] 检测到条件依赖循环: [${keys}]，将回退到数组顺序执行。`,
-          );
+          return {
+            result: EnsureResult.ERROR,
+            message:
+              `Dependency cycle detected among conditions [${keys}]; ` +
+              `no pending condition is free to run. Check their dependsOn declarations.`,
+          };
         }
-        const condRef = readyRef ?? pending[0];
+        const condRef = readyRef;
         const condKey = condRef.condition;
         const resolver = this.resolvers.get(condKey);
 
@@ -219,25 +235,31 @@ export class ConditionRuntime {
           return {
             result: EnsureResult.ERROR,
             message:
-              `条件 "${condKey}" 未注册 resolver。` +
-              `请通过 runtime.registerResolver() 注册对应的 resolver。`,
+              `Condition "${condKey}" has no registered resolver. ` +
+              `Register one via runtime.registerResolver().`,
           };
         }
 
+        // The initiator (owner) flows through to every resolver invocation,
+        // untouched and uninterpreted by the runtime: in-call resolvers reach
+        // the controller's initiating page through it instead of global state.
         const ctx: ResolveContext = {
           target,
           params: condRef.params,
           runtime: runtimeView,
+          owner: target.owner,
         };
 
         const result = await resolver.resolve(ctx);
 
         if (result === ResolveResult.CANCEL) {
-          return { result: EnsureResult.CANCEL };
+          // Identify which condition the chain cancelled on so callers with
+          // multiple prerequisites can branch per-condition failure policies.
+          return { result: EnsureResult.CANCEL, cancelledCondition: condRef };
         }
 
         if (result === ResolveResult.FAILED) {
-          return { result: EnsureResult.FAILED };
+          return { result: EnsureResult.FAILED, failedCondition: condRef };
         }
 
         if (result === ResolveResult.DEFERRED) {
@@ -249,7 +271,19 @@ export class ConditionRuntime {
         }
 
         if (!this.isSatisfied(condKey, condRef.params)) {
-          return { result: EnsureResult.FAILED };
+          // The resolver reported SUCCESS but the condition is still
+          // unsatisfied — a contract violation by the resolver. Log it with
+          // its own tag so it is distinguishable from a resolver-reported
+          // FAILED in the console.
+          console.error(
+            `[ConditionRuntime] Resolver reported SUCCESS but condition ` +
+              `"${condKey}" is still unsatisfied (params=${JSON.stringify(condRef.params)}); ` +
+              `reporting FAILED.`,
+          );
+          return {
+            result: EnsureResult.FAILED,
+            failedCondition: condRef,
+          };
         }
 
         // SUCCESS — drop ONLY the ref just resolved (by identity) and
@@ -267,9 +301,9 @@ export class ConditionRuntime {
     }
   }
 
-  /** Log the error and return a FAILED outcome. Used by both catch blocks. */
+  /** Log the error and return a FAILED outcome. Used by the catch block. */
   private failedOutcome(err: unknown): EnsureOutcome {
-    console.error('[ConditionRuntime] 条件编排失败:', err);
+    console.error('[ConditionRuntime] Condition orchestration failed:', err);
     return { result: EnsureResult.FAILED };
   }
 
